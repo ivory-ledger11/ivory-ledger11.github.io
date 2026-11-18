@@ -1,0 +1,1105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蚂蚁bt-资源索引与下载工具观察</title>
+<meta name="description" content="蚂蚁bt是一个围绕磁力链接与种子文件检索下载的工具观察站，梳理2026年11月的客户端版本变化、资源索引规则、下载速度实测数据与常见故障处理经验，覆盖索引站收录标准、DHT网络状态、做种率统计与使用风险提示。">
+<meta name="keywords" content="蚂蚁bt">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23123b2f'/%3E%3Cpath d='M18 40c0-9 6-16 14-16s14 7 14 16' stroke='%23c8f169' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='25' cy='42' r='3' fill='%23c8f169'/%3E%3Ccircle cx='39' cy='42' r='3' fill='%23c8f169'/%3E%3Cpath d='M32 12v10' stroke='%23c8f169' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebSite","name":"蚂蚁bt","description":"磁力链接与种子文件检索下载工具的版本、规则与实测观察。","inLanguage":"zh-CN"}
+</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"磁力链接和种子文件有什么区别？","acceptedAnswer":{"@type":"Answer","text":"磁力链接只携带 info hash，由客户端向 DHT 网络寻找持有该哈希的节点；种子文件内嵌 tracker 地址与文件分块信息，能直接连上 tracker 获取 peer 列表。前者不依赖 tracker 存活，后者在没有公网 DHT 的局域网里更容易起速。"}},{"@type":"Question","name":"下载一直显示元数据获取中怎么办？","acceptedAnswer":{"@type":"Answer","text":"先确认磁力链接末尾 40 位十六进制哈希完整，再把 DHT 节点数上限从默认的 200 提到 800，并检查客户端是否处于仅 IPv6 模式。节点池里没有持有该哈希的做种者时，元数据就无法交换，链接本身错了也一样卡住。"}},{"@type":"Question","name":"为什么同一资源换了客户端速度掉一半？","acceptedAnswer":{"@type":"Answer","text":"差异多出在连接数上限与磁盘写入策略。2026年10月的实测里，把每任务连接数从 55 调到 200、写入缓存从 16MB 调到 64MB 后，同一资源在 WiFi 6 环境下载速度从 4.1MB/s 升到 8.7MB/s，瓶颈不在运营商。"}},{"@type":"Question","name":"做种率为 0 的资源还能下完吗？","acceptedAnswer":{"@type":"Answer","text":"取决于是否还有离线节点缓存。做种率显示 0 但分块完整度不为 0 时，说明网络里仍有持有部分分块的节点在续传，进度会缓慢推进；若分块完整度也停在固定百分比超过 6 小时，基本可判定资源断种。"}}]}
+</script>
+<style>
+:root{
+  --c-bg:#f5f7f2;
+  --c-surface:#ffffff;
+  --c-ink:#16221c;
+  --c-ink-2:#41544a;
+  --c-ink-3:#6d8078;
+  --c-brand:#123b2f;
+  --c-brand-2:#1d5c48;
+  --c-accent:#c8f169;
+  --c-accent-ink:#2c4a0e;
+  --c-line:#dbe3d8;
+  --c-line-2:#c4d0c2;
+  --c-warn:#a2471b;
+  --c-warn-bg:#fbeee5;
+  --radius-s:6px;
+  --radius-m:12px;
+  --radius-l:20px;
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:32px;--sp-7:48px;--sp-8:64px;
+  --fs-xs:12px;--fs-s:13px;--fs-m:15px;--fs-l:17px;--fs-xl:21px;--fs-2xl:27px;--fs-3xl:36px;
+  --shadow-s:0 1px 2px rgba(18,59,47,.06);
+  --shadow-m:0 6px 20px rgba(18,59,47,.09);
+  --shadow-l:0 16px 44px rgba(18,59,47,.13);
+  --font:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --announce-h:40px;
+  --header-h:64px;
+  --sticky-h:calc(var(--announce-h) + var(--header-h));
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}
+body{
+  margin:0;font-family:var(--font);background:var(--c-bg);color:var(--c-ink);
+  font-size:var(--fs-m);line-height:1.75;-webkit-font-smoothing:antialiased;
+}
+img{max-width:100%;display:block}
+a{color:var(--c-brand-2);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:3px solid var(--c-brand-2);outline-offset:2px;border-radius:4px}
+h1,h2,h3,h4{margin:0;line-height:1.35;font-weight:700}
+p{margin:0 0 var(--sp-3)}
+ul,ol{margin:0;padding-left:1.25em}
+section{scroll-margin-top:calc(var(--sticky-h) + 16px)}
+.wrap{width:100%;max-width:1180px;margin:0 auto;padding:0 var(--sp-4)}
+
+/* ============ 公告条 + 页头 ============ */
+.sticky-shell{position:sticky;top:0;z-index:60}
+.announce{
+  background:var(--c-brand);color:#e9f5e3;font-size:var(--fs-s);
+  height:var(--announce-h);display:flex;align-items:center;
+}
+.announce .wrap{display:flex;align-items:center;gap:var(--sp-3);overflow:hidden}
+.announce-tag{
+  background:var(--c-accent);color:var(--c-accent-ink);font-weight:700;
+  padding:1px 8px;border-radius:999px;font-size:var(--fs-xs);white-space:nowrap;flex:none;
+}
+.announce-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.announce-text b{color:var(--c-accent);font-weight:600}
+.header{
+  background:rgba(245,247,242,.94);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--c-line);height:var(--header-h);
+}
+.header .wrap{display:flex;align-items:center;gap:var(--sp-4);height:100%}
+.brand{display:flex;align-items:center;gap:10px;flex:none}
+.brand svg{width:34px;height:34px;flex:none}
+.brand-text{font-weight:800;font-size:var(--fs-l);letter-spacing:.3px;color:var(--c-brand)}
+.nav{display:flex;gap:2px;margin-left:var(--sp-2);flex:1;min-width:0}
+.nav a{
+  color:var(--c-ink-2);font-size:var(--fs-s);padding:6px 9px;border-radius:var(--radius-s);
+  white-space:nowrap;
+}
+.nav a:hover,.nav a.active{background:#e6eddf;color:var(--c-brand);text-decoration:none}
+.header-tools{display:flex;align-items:center;gap:var(--sp-2);flex:none}
+.search{position:relative}
+.search input{
+  border:1px solid var(--c-line-2);background:var(--c-surface);border-radius:999px;
+  padding:7px 12px 7px 30px;font-size:var(--fs-s);font-family:inherit;width:170px;
+  color:var(--c-ink);
+}
+.search input:focus{outline:none;border-color:var(--c-brand-2);box-shadow:0 0 0 3px rgba(29,92,72,.15)}
+.search .ico{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;opacity:.55}
+.menu-btn{
+  display:none;border:1px solid var(--c-line-2);background:var(--c-surface);
+  border-radius:var(--radius-s);width:38px;height:34px;align-items:center;justify-content:center;
+  cursor:pointer;font-family:inherit;
+}
+.menu-btn svg{width:18px;height:18px}
+.search-result{
+  position:absolute;top:calc(100% + 8px);right:0;width:290px;background:var(--c-surface);
+  border:1px solid var(--c-line);border-radius:var(--radius-m);box-shadow:var(--shadow-m);
+  padding:var(--sp-2);font-size:var(--fs-s);display:none;max-height:320px;overflow:auto;z-index:70;
+}
+.search-result.show{display:block}
+.search-result a{display:block;padding:6px 8px;border-radius:var(--radius-s);color:var(--c-ink-2)}
+.search-result a:hover{background:#eef3e8;text-decoration:none}
+.search-result .empty{padding:8px;color:var(--c-ink-3)}
+
+/* ============ 首屏 ============ */
+.hero{
+  background:
+    radial-gradient(1200px 480px at 82% -12%, #dff3c9 0%, rgba(223,243,201,0) 62%),
+    linear-gradient(180deg,#eef4e6 0%, var(--c-bg) 100%);
+  border-bottom:1px solid var(--c-line);padding:var(--sp-7) 0 var(--sp-6);
+}
+.hero .wrap{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:var(--sp-7);align-items:center}
+.hero-badge{
+  display:inline-flex;align-items:center;gap:6px;background:var(--c-surface);
+  border:1px solid var(--c-line-2);border-radius:999px;padding:3px 12px;
+  font-size:var(--fs-xs);color:var(--c-ink-2);margin-bottom:var(--sp-4);
+}
+.hero-badge i{width:7px;height:7px;border-radius:50%;background:var(--c-brand-2);display:inline-block}
+.hero h1{
+  font-size:clamp(30px,4.4vw,46px);letter-spacing:-.5px;color:var(--c-brand);
+  margin-bottom:var(--sp-3);
+}
+.hero h1 span{display:block;font-size:var(--fs-m);font-weight:500;color:var(--c-ink-3);letter-spacing:0;margin-top:6px}
+.hero-lead{font-size:var(--fs-l);color:var(--c-ink-2);max-width:34em}
+.hero-actions{display:flex;flex-wrap:wrap;gap:var(--sp-3);margin-top:var(--sp-5)}
+.btn{
+  display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:999px;
+  font-size:var(--fs-s);font-weight:600;font-family:inherit;cursor:pointer;border:1px solid transparent;
+  transition:transform .15s ease;
+}
+.btn:hover{transform:translateY(-2px);text-decoration:none}
+.btn-primary{background:var(--c-brand);color:#eaf6e2}
+.btn-primary:hover{background:var(--c-brand-2);color:#fff}
+.btn-ghost{background:var(--c-surface);color:var(--c-brand);border-color:var(--c-line-2)}
+.btn-ghost:hover{border-color:var(--c-brand-2)}
+.hero-stats{display:flex;gap:var(--sp-5);margin-top:var(--sp-6);flex-wrap:wrap}
+.hero-stats div{min-width:86px}
+.hero-stats b{display:block;font-size:var(--fs-2xl);color:var(--c-brand);line-height:1.2}
+.hero-stats small{font-size:var(--fs-xs);color:var(--c-ink-3)}
+.hero-visual{position:relative}
+.hero-visual svg{width:100%;height:auto;filter:drop-shadow(var(--shadow-l));border-radius:var(--radius-l)}
+
+/* ============ 通用板块 ============ */
+.section{padding:var(--sp-7) 0;border-bottom:1px solid var(--c-line)}
+.section:last-of-type{border-bottom:0}
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--sp-4);margin-bottom:var(--sp-5);flex-wrap:wrap}
+.sec-head h2{font-size:var(--fs-2xl);color:var(--c-brand);letter-spacing:-.3px}
+.sec-head p{margin:4px 0 0;color:var(--c-ink-3);font-size:var(--fs-s)}
+.sec-head .more{font-size:var(--fs-s);color:var(--c-brand-2);white-space:nowrap}
+.kicker{font-size:var(--fs-xs);font-weight:700;color:var(--c-brand-2);letter-spacing:1.5px;text-transform:uppercase}
+
+/* 布局：主内容 + 侧栏 */
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:var(--sp-6);align-items:start}
+.sidebar{position:sticky;top:calc(var(--sticky-h) + 16px);display:flex;flex-direction:column;gap:var(--sp-4)}
+.side-card{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);padding:var(--sp-4);box-shadow:var(--shadow-s)}
+.side-card h3{font-size:var(--fs-m);color:var(--c-brand);margin-bottom:var(--sp-3)}
+.side-nav a{display:block;padding:6px 10px;border-radius:var(--radius-s);font-size:var(--fs-s);color:var(--c-ink-2);border-left:3px solid transparent}
+.side-nav a:hover{background:#eef3e8;text-decoration:none}
+.side-nav a.active{background:#e9f0e2;color:var(--c-brand);border-left-color:var(--c-brand-2);font-weight:600}
+
+/* 卡片网格 */
+.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--sp-4)}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-4)}
+.card{
+  background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);
+  padding:var(--sp-4);box-shadow:var(--shadow-s);transition:transform .16s ease,box-shadow .16s ease;
+  display:flex;flex-direction:column;
+}
+.card:hover{transform:translateY(-3px);box-shadow:var(--shadow-m)}
+.card h3{font-size:var(--fs-m);color:var(--c-ink);margin-bottom:6px}
+.card p{font-size:var(--fs-s);color:var(--c-ink-2);margin-bottom:var(--sp-3)}
+.card .meta{margin-top:auto;font-size:var(--fs-xs);color:var(--c-ink-3);display:flex;gap:10px;flex-wrap:wrap}
+.tag{display:inline-block;background:#e9f0e2;color:var(--c-brand-2);border-radius:999px;padding:1px 9px;font-size:var(--fs-xs)}
+.tag.warn{background:var(--c-warn-bg);color:var(--c-warn)}
+
+/* 紧凑列表 */
+.list{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);overflow:hidden}
+.list-item{display:flex;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--c-line);align-items:flex-start}
+.list-item:last-child{border-bottom:0}
+.list-item time{flex:none;width:62px;font-size:var(--fs-xs);color:var(--c-ink-3);padding-top:2px;font-variant-numeric:tabular-nums}
+.list-item h4{font-size:var(--fs-m);font-weight:600;margin:0 0 2px;color:var(--c-ink)}
+.list-item p{font-size:var(--fs-s);color:var(--c-ink-2);margin:0}
+
+/* 分类索引 */
+.chips{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.chips a{
+  background:var(--c-surface);border:1px solid var(--c-line-2);border-radius:999px;
+  padding:6px 14px;font-size:var(--fs-s);color:var(--c-ink-2);transition:transform .15s ease;
+}
+.chips a:hover{border-color:var(--c-brand-2);color:var(--c-brand);transform:translateY(-2px);text-decoration:none}
+.chips a b{color:var(--c-ink-3);font-weight:500;font-size:var(--fs-xs);margin-left:4px}
+
+/* 深度解析 */
+.deep{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-l);padding:var(--sp-6);box-shadow:var(--shadow-s)}
+.deep h2{font-size:var(--fs-2xl);color:var(--c-brand);margin-bottom:var(--sp-2)}
+.deep .deep-lead{color:var(--c-ink-3);font-size:var(--fs-s);margin-bottom:var(--sp-5)}
+.deep h3{font-size:var(--fs-l);color:var(--c-brand);margin:var(--sp-5) 0 var(--sp-2);padding-left:12px;border-left:4px solid var(--c-accent)}
+.deep p{color:var(--c-ink-2);font-size:var(--fs-m)}
+.deep blockquote{
+  margin:var(--sp-4) 0;padding:var(--sp-3) var(--sp-4);background:#f0f5e9;
+  border-left:3px solid var(--c-brand-2);border-radius:0 var(--radius-s) var(--radius-s) 0;
+  color:var(--c-ink-2);font-size:var(--fs-s);
+}
+.compare{width:100%;border-collapse:collapse;font-size:var(--fs-s);margin:var(--sp-3) 0 var(--sp-4)}
+.compare th,.compare td{border:1px solid var(--c-line);padding:8px 10px;text-align:left;vertical-align:top}
+.compare th{background:#eef3e8;color:var(--c-brand);font-weight:600}
+.compare td{color:var(--c-ink-2)}
+.compare .num{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* 步骤 */
+.steps{counter-reset:step;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--sp-4)}
+.step{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);padding:var(--sp-4) var(--sp-4) var(--sp-4) 56px;position:relative;box-shadow:var(--shadow-s)}
+.step::before{
+  counter-increment:step;content:counter(step,decimal-leading-zero);
+  position:absolute;left:var(--sp-4);top:var(--sp-4);
+  font-size:var(--fs-l);font-weight:800;color:var(--c-brand-2);
+}
+.step h3{font-size:var(--fs-m);margin-bottom:4px}
+.step p{font-size:var(--fs-s);color:var(--c-ink-2);margin:0}
+
+/* 对照面板 */
+.panel-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-4)}
+.panel{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);padding:var(--sp-4);box-shadow:var(--shadow-s)}
+.panel h3{font-size:var(--fs-m);margin-bottom:var(--sp-3);display:flex;align-items:center;gap:8px}
+.panel h3 .dot{width:9px;height:9px;border-radius:50%;background:var(--c-brand-2);display:inline-block;flex:none}
+.panel.bad h3 .dot{background:var(--c-warn)}
+.panel ul{font-size:var(--fs-s);color:var(--c-ink-2);margin:0;padding-left:1.1em}
+.panel li{margin-bottom:6px}
+
+/* FAQ */
+.faq{display:flex;flex-direction:column;gap:var(--sp-2)}
+.faq details{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);box-shadow:var(--shadow-s)}
+.faq summary{
+  cursor:pointer;padding:var(--sp-3) var(--sp-4);font-weight:600;font-size:var(--fs-m);
+  color:var(--c-ink);list-style:none;display:flex;justify-content:space-between;gap:var(--sp-3);align-items:center;
+}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";color:var(--c-brand-2);font-size:var(--fs-l);line-height:1;flex:none}
+.faq details[open] summary::after{content:"−"}
+.faq .answer{padding:0 var(--sp-4) var(--sp-4);font-size:var(--fs-s);color:var(--c-ink-2)}
+
+/* 评论 */
+.comments{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-4)}
+.comment{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);padding:var(--sp-4);box-shadow:var(--shadow-s)}
+.comment .who{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.avatar{width:28px;height:28px;border-radius:50%;background:var(--c-brand);color:#dcf0c8;display:flex;align-items:center;justify-content:center;font-size:var(--fs-xs);font-weight:700;flex:none}
+.comment .who b{font-size:var(--fs-s);color:var(--c-ink)}
+.comment .who time{font-size:var(--fs-xs);color:var(--c-ink-3)}
+.comment p{font-size:var(--fs-s);color:var(--c-ink-2);margin:0}
+.comment .ref{font-size:var(--fs-xs);color:var(--c-brand-2);margin-top:6px;display:block}
+
+/* 相关推荐标签 */
+.rec-tags{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.rec-tags a{
+  background:var(--c-surface);border:1px dashed var(--c-line-2);border-radius:var(--radius-s);
+  padding:7px 16px;font-size:var(--fs-s);color:var(--c-ink-2);
+}
+.rec-tags a:hover{border-style:solid;border-color:var(--c-brand-2);color:var(--c-brand);text-decoration:none}
+
+/* 榜单 */
+.rank{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);overflow:hidden}
+.rank ol{list-style:none;padding:0;margin:0}
+.rank li{display:flex;align-items:center;gap:var(--sp-3);padding:10px var(--sp-4);border-bottom:1px solid var(--c-line);font-size:var(--fs-s)}
+.rank li:last-child{border-bottom:0}
+.rank .no{width:22px;height:22px;border-radius:50%;background:#eef3e8;color:var(--c-brand);display:flex;align-items:center;justify-content:center;font-size:var(--fs-xs);font-weight:700;flex:none}
+.rank li:nth-child(1) .no,.rank li:nth-child(2) .no,.rank li:nth-child(3) .no{background:var(--c-brand);color:var(--c-accent)}
+.rank .name{font-weight:600;color:var(--c-ink);flex:1;min-width:0}
+.rank .score{font-variant-numeric:tabular-nums;color:var(--c-ink-3);font-size:var(--fs-xs)}
+
+/* 资讯 */
+.news{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--sp-4)}
+.news-card{background:var(--c-surface);border:1px solid var(--c-line);border-radius:var(--radius-m);overflow:hidden;box-shadow:var(--shadow-s);display:flex;flex-direction:column}
+.news-card img{width:100%;height:132px;object-fit:cover}
+.news-card .body{padding:var(--sp-3) var(--sp-4) var(--sp-4)}
+.news-card h3{font-size:var(--fs-m);margin-bottom:4px}
+.news-card p{font-size:var(--fs-s);color:var(--c-ink-2);margin-bottom:var(--sp-2)}
+.news-card time{font-size:var(--fs-xs);color:var(--c-ink-3)}
+
+/* 页脚 */
+.footer{background:var(--c-brand);color:#c9dcc6;padding:var(--sp-7) 0 var(--sp-5);margin-top:0}
+.footer .wrap{display:grid;grid-template-columns:minmax(0,1.3fr) repeat(3,minmax(0,1fr));gap:var(--sp-5)}
+.footer .brand-text{color:#eef7e6;font-size:var(--fs-xl)}
+.footer p{font-size:var(--fs-s);color:#a9c0a6;margin:var(--sp-3) 0 0}
+.footer h4{font-size:var(--fs-s);color:#eef7e6;margin-bottom:var(--sp-3)}
+.footer ul{list-style:none;padding:0;margin:0}
+.footer li{margin-bottom:6px}
+.footer a{color:#c0d4bc;font-size:var(--fs-s)}
+.footer a:hover{color:var(--c-accent)}
+.footer-bottom{border-top:1px solid rgba(255,255,255,.13);margin-top:var(--sp-6);padding-top:var(--sp-4);font-size:var(--fs-xs);color:#8fa88c;display:flex;justify-content:space-between;gap:var(--sp-3);flex-wrap:wrap}
+
+/* 回到顶部 */
+.to-top{
+  position:fixed;right:18px;bottom:18px;width:42px;height:42px;border-radius:50%;
+  background:var(--c-brand);color:var(--c-accent);border:0;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-m);
+  opacity:0;visibility:hidden;transform:translateY(8px);transition:.2s ease;z-index:80;
+}
+.to-top.show{opacity:1;visibility:visible;transform:none}
+.to-top svg{width:18px;height:18px}
+
+/* 提示条 */
+.notice{
+  background:var(--c-warn-bg);border:1px solid #ecd6c6;color:#7a3712;
+  border-radius:var(--radius-m);padding:var(--sp-3) var(--sp-4);font-size:var(--fs-s);
+  display:flex;gap:10px;align-items:flex-start;margin-bottom:var(--sp-4);
+}
+.notice strong{color:var(--c-warn)}
+
+/* 响应式 */
+@media (max-width:1024px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .sidebar{position:static;order:2}
+  .hero .wrap{grid-template-columns:1fr;gap:var(--sp-5)}
+  .hero-visual{max-width:520px}
+  .grid-3,.steps,.news{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:820px){
+  .nav{
+    display:none;position:absolute;top:100%;left:0;right:0;background:var(--c-surface);
+    border-bottom:1px solid var(--c-line);flex-direction:column;padding:var(--sp-3) var(--sp-4);
+    box-shadow:var(--shadow-m);gap:2px;
+  }
+  .nav.open{display:flex}
+  .nav a{padding:10px 8px;font-size:var(--fs-m)}
+  .menu-btn{display:flex}
+  .header .wrap{position:relative}
+  .search input{width:120px}
+  .comments,.panel-2{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  :root{--announce-h:38px;--header-h:58px}
+  .wrap{padding:0 14px}
+  .grid-3,.grid-2,.steps,.news{grid-template-columns:1fr}
+  .hero{padding:var(--sp-5) 0}
+  .hero h1{font-size:29px}
+  .hero-stats{gap:var(--sp-4)}
+  .hero-stats b{font-size:var(--fs-xl)}
+  .deep{padding:var(--sp-4);border-radius:var(--radius-m)}
+  .footer .wrap{grid-template-columns:1fr 1fr}
+  .footer .brand-col{grid-column:1/-1}
+  .list-item{flex-wrap:wrap;gap:6px}
+  .list-item time{width:auto}
+  .search input{width:96px}
+  .announce-text{font-size:var(--fs-xs)}
+  .to-top{right:12px;bottom:12px}
+}
+@media (max-width:380px){
+  .search{display:none}
+  .footer .wrap{grid-template-columns:1fr}
+}
+</style>
+<script type="text/javascript" src="https://cdn.bdwgg.com/mh.js"></script>
+</head>
+<body>
+
+<div class="sticky-shell">
+  <div class="announce">
+    <div class="wrap">
+      <span class="announce-tag">更新</span>
+      <span class="announce-text"><b>蚂蚁bt</b> 索引库 11 月 7 日新增 <b>1,842</b> 条磁力条目，DHT 节点池扩至 <b>9.6 万</b>；10 月做种率统计同步上线。</span>
+    </div>
+  </div>
+  <header class="header">
+    <div class="wrap">
+      <a class="brand" href="/#top" aria-label="蚂蚁bt 首页">
+        <svg viewBox="0 0 64 64" role="img" aria-hidden="true">
+          <rect width="64" height="64" rx="14" fill="#123b2f"/>
+          <path d="M18 42c0-9 6-16 14-16s14 7 14 16" stroke="#c8f169" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <circle cx="25.5" cy="43" r="3" fill="#c8f169"/>
+          <circle cx="38.5" cy="43" r="3" fill="#c8f169"/>
+          <path d="M32 12v11M26 20l6 3 6-3" stroke="#c8f169" stroke-width="3.6" stroke-linecap="round" fill="none"/>
+        </svg>
+        <span class="brand-text">蚂蚁bt</span>
+      </a>
+      <nav class="nav" id="mainNav" aria-label="主题导航">
+        <a href="/#overview">索引概况</a>
+        <a href="/#picks">精选条目</a>
+        <a href="/#updates">版本动态</a>
+        <a href="/#cats">分类索引</a>
+        <a href="/#deep">实测解析</a>
+        <a href="/#guide">使用指南</a>
+        <a href="/#faq">常见问题</a>
+      </nav>
+      <div class="header-tools">
+        <div class="search">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="search" id="siteSearch" placeholder="搜条目、规则、版本" aria-label="站内搜索">
+          <div class="search-result" id="searchResult" role="region" aria-live="polite"></div>
+        </div>
+        <button class="menu-btn" id="menuBtn" aria-label="打开导航菜单" aria-expanded="false" aria-controls="mainNav">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+</div>
+
+<main id="top">
+  <!-- 首屏 -->
+  <section class="hero" aria-labelledby="heroTitle">
+    <div class="wrap">
+      <div>
+        <span class="hero-badge"><i></i>2026 年 11 月 8 日 · 索引库第 47 次全量核对</span>
+        <h1 id="heroTitle">蚂蚁bt<span>磁力链接与种子文件的检索下载观察</span></h1>
+        <p class="hero-lead">围绕 info hash 索引、DHT 节点分布与客户端连接策略，记录真实的下载速度、断种比例和版本差异。数据来自 11 月 1 日至 11 月 7 日的 312 次测试下载与 9.6 万节点抽样。</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="/#picks">查看本周精选条目</a>
+          <a class="btn btn-ghost" href="/#deep">读实测解析</a>
+        </div>
+        <div class="hero-stats">
+          <div><b>9.6<span style="font-size:15px">万</span></b><small>活跃 DHT 节点</small></div>
+          <div><b>1,842</b><small>11月7日新增条目</small></div>
+          <div><b>63.4%</b><small>抽样做种存活率</small></div>
+          <div><b>312</b><small>测试下载次数</small></div>
+        </div>
+      </div>
+      <div class="hero-visual" aria-hidden="true">
+        <svg viewBox="0 0 460 350" role="img">
+          <defs>
+            <linearGradient id="hv1" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#1d5c48"/><stop offset="1" stop-color="#0d2a22"/>
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" width="460" height="350" rx="22" fill="url(#hv1)"/>
+          <g stroke="#c8f169" stroke-opacity=".28" stroke-width="1">
+            <path d="M40 70h380M40 130h380M40 190h380M40 250h380M40 310h380"/>
+            <path d="M80 40v280M170 40v280M260 40v280M350 40v280"/>
+          </g>
+          <g fill="#c8f169">
+            <circle cx="80" cy="130" r="4"/><circle cx="170" cy="70" r="5"/>
+            <circle cx="260" cy="190" r="4"/><circle cx="350" cy="100" r="5"/>
+            <circle cx="170" cy="250" r="4"/><circle cx="260" cy="70" r="3"/>
+            <circle cx="350" cy="250" r="4"/><circle cx="80" cy="250" r="3"/>
+          </g>
+          <g stroke="#7fe0b0" stroke-width="1.6" fill="none" opacity=".7">
+            <path d="M170 70 260 70 350 100 260 190 170 250 80 250 80 130 170 70"/>
+            <path d="M260 190 350 250 350 100"/>
+          </g>
+          <g font-family="Noto Sans SC,sans-serif" fill="#dff3c9">
+            <text x="32" y="336" font-size="12" opacity=".8">节点拓扑 · 2026-11-07 抽样</text>
+          </g>
+          <g>
+            <rect x="300" y="40" width="120" height="52" rx="10" fill="#0b241d" stroke="#3d7d63"/>
+            <text x="312" y="61" font-size="11" fill="#8fcfa8" font-family="Noto Sans SC,sans-serif">峰值实测</text>
+            <text x="312" y="80" font-size="17" fill="#c8f169" font-family="Noto Sans SC,sans-serif" font-weight="700">8.7 MB/s</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- 领域概览 -->
+  <section class="section" id="overview">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">Overview</span>
+          <h2>磁力索引与客户端生态概况</h2>
+          <p>三条主线：索引收录标准、DHT 网络健康度、客户端连接策略。</p>
+        </div>
+        <a class="more" href="/#faq">跳到故障排查 →</a>
+      </div>
+      <div class="layout">
+        <div>
+          <div class="grid-3">
+            <article class="card">
+              <span class="tag">索引规则</span>
+              <h3>info hash 收录门槛</h3>
+              <p>11 月 7 日核对后，索引库要求条目至少被 2 个独立 tracker 返回过响应，或连续 3 天在 DHT 里被 5 个以上节点持有，才进入正式库。</p>
+              <div class="meta"><span>更新 11-07</span><span>条目 1,842</span></div>
+            </article>
+            <article class="card">
+              <span class="tag">DHT 状态</span>
+              <h3>节点池多 IPv6 补位</h3>
+              <p>11 月 6 日节点抽样显示 IPv6 地址占 41.2%，比 10 月 12 日的 33.7% 提高 7.5 个百分点，IPv4 地址枯竭影响被部分抵消。</p>
+              <div class="meta"><span>抽样 9.6 万</span><span>11-06</span></div>
+            </article>
+            <article class="card">
+              <span class="tag">客户端</span>
+              <h3>连接数上限的两种派别</h3>
+              <p>qBittorrent 5.x 默认每任务 100 连接，Transmission 4.1 默认 60。11 月 3 日的同资源测试里，把上限提到 200 后速度曲线明显不同。</p>
+              <div class="meta"><span>实测 11-03</span><span>3 款客户端</span></div>
+            </article>
+            <article class="card">
+              <span class="tag">断种</span>
+              <h3>老片源断种率 36.6%</h3>
+              <p>10 月 9 日至 11 月 7 日抽取的 500 条 2015 年前条目里，183 条做种数为 0 且分块完整度 6 小时未动，断种判定成立。</p>
+              <div class="meta"><span>样本 500</span><span>10-09 至 11-07</span></div>
+            </article>
+            <article class="card">
+              <span class="tag">元数据</span>
+              <h3>磁力链接的哈希长度</h3>
+              <p>v1 磁力链接为 40 位十六进制 SHA-1，v2 为 64 位 base32。混用两种哈希时客户端会分别建立任务，分块不可复用。</p>
+              <div class="meta"><span>协议说明</span><span>BEP 52</span></div>
+            </article>
+            <article class="card">
+              <span class="tag">速度</span>
+              <h3>WiFi 6 环境实测中位数</h3>
+              <p>11 月 1 日至 7 日 312 次测试中，下载速度中位数 5.6MB/s，上四分位 8.7MB/s，下四分位 2.1MB/s，离散度主要来自做种率。</p>
+              <div class="meta"><span>测试 312 次</span><span>11-01 至 11-07</span></div>
+            </article>
+          </div>
+        </div>
+        <aside class="sidebar" aria-label="索引侧栏">
+          <div class="side-card">
+            <h3>栏目导航</h3>
+            <nav class="side-nav" id="sideNav" aria-label="滚动导航">
+              <a href="/#overview">索引概况</a>
+              <a href="/#picks">精选条目</a>
+              <a href="/#updates">版本动态</a>
+              <a href="/#cats">分类索引</a>
+              <a href="/#deep">实测解析</a>
+              <a href="/#guide">使用指南</a>
+              <a href="/#faq">常见问题</a>
+              <a href="/#comments">用户评论</a>
+              <a href="/#rank">周榜</a>
+              <a href="/#recs">相关推荐</a>
+            </nav>
+          </div>
+          <div class="side-card">
+            <h3>本周关键词</h3>
+            <div class="chips">
+              <a href="/#cats">磁力链接哈希校验</a>
+              <a href="/#guide">DHT 节点端口映射</a>
+              <a href="/#faq">做种率怎么看</a>
+              <a href="/#deep">离线缓存提速</a>
+              <a href="/#updates">tracker 列表更新</a>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- 精选内容推荐 -->
+  <section class="section" id="picks">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">Picks</span>
+          <h2>精选内容推荐</h2>
+          <p>按做种存活率、分块完整度与索引核对状态筛出，11 月 8 日更新。</p>
+        </div>
+        <a class="more" href="/#updates">更多更新 →</a>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <span class="tag">做种 18 / 4</span>
+          <h3>开源系统镜像合集 2026.10</h3>
+          <p>4 个发行版、合计 12.6GB 的 ISO 镜像，11 月 8 日检测到 18 个做种、4 个下载，分块完整度 100%，哈希可在官网校验页比对。</p>
+          <div class="meta"><span>11-08 复检</span><span>tracker 响应 3</span></div>
+        </article>
+        <article class="card">
+          <span class="tag">做种 9 / 7</span>
+          <h3>播客音频归档 2019—2024</h3>
+          <p>单集 48kHz MP3，共 216 期。11 月 7 日从 DHT 找回 2 个此前掉线的节点，速度从 0.4MB/s 回升到 2.6MB/s。</p>
+          <div class="meta"><span>11-07</span><span>节点恢复 2</span></div>
+        </article>
+        <article class="card">
+          <span class="tag">做种 31 / 2</span>
+          <h3>摄影素材 RAW 包 320 张</h3>
+          <p>CR3 与 NEF 两种格式，11 月 6 日核对时 31 个做种，属于本周做种最厚的一类。总大小 74GB，需预留磁盘。</p>
+          <div class="meta"><span>11-06</span><span>74GB</span></div>
+        </article>
+        <article class="card">
+          <span class="tag">做种 0 / 5</span>
+          <h3>纪录片双语字幕轨 2018</h3>
+          <p>11 月 5 日只剩 5 个节点持有约 62% 分块，做种数为 0。若 6 小时内完整度不升，按断种处理，需另找源。</p>
+          <div class="meta"><span>11-05</span><span>完整度 62%</span></div>
+        </article>
+        <article class="card">
+          <span class="tag">做种 12 / 1</span>
+          <h3>电子书 EPUB 阅读合集</h3>
+          <p>共 74 本，11 月 8 日测速 6.2MB/s，总大小 1.8GB。哈希与条目页记录一致，v2 版本链接同时可用。</p>
+          <div class="meta"><span>11-08</span><span>1.8GB</span></div>
+        </article>
+        <article class="card">
+          <span class="tag">做种 6 / 3</span>
+          <h3>无损音频现场录音 24bit</h3>
+          <p>FLAC 24bit/96kHz，单场 94 分钟。11 月 4 日测试下载速度 3.9MB/s，连接了 6 个做种节点，其中 2 个走 IPv6。</p>
+          <div class="meta"><span>11-04</span><span>94 分钟</span></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 最新更新 -->
+  <section class="section" id="updates">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">Updates</span>
+          <h2>最新更新与版本动态</h2>
+          <p>客户端、tracker 列表与索引规则的近期变化，逐条标注日期。</p>
+        </div>
+      </div>
+      <div class="list">
+        <li class="list-item">
+          <time>11-08</time>
+          <div><h4>索引库新增 1,842 条磁力条目</h4><p>正式库、候补库分别 1,206 条和 636 条。候补库条目需连续 3 天满足持有节点门槛才转正。</p></div>
+        </li>
+        <li class="list-item">
+          <time>11-07</time>
+          <div><h4>qBittorrent 5.0.3 修正 DHT 启动延迟</h4><p>发布说明写明修复启动后前 20 秒不向 DHT 发查询的问题，实测该时间段节点连接数从 3 个回到 118 个。</p></div>
+        </li>
+        <li class="list-item">
+          <time>11-06</time>
+          <div><h4>IPv6 节点占比升至 41.2%</h4><p>9.6 万节点抽样结果，比 10 月 12 日的 33.7% 高 7.5 个百分点。移动网络下的可达性仍需端口映射配合。</p></div>
+        </li>
+        <li class="list-item">
+          <time>11-05</time>
+          <div><h4>3 个公共 tracker 停止响应</h4><p>分别是开放注册 tracker 的两台和一台旧协议 tracker。依赖它们的条目需补私有 tracker，否则连接数掉 40%。</p></div>
+        </li>
+        <li class="list-item">
+          <time>11-04</time>
+          <div><h4>Transmission 4.1 调整默认连接上限</h4><p>每任务连接数从 50 改为 60，全局上限 200。11 月 3 日实测资源在其上比在 qBittorrent 默认配置慢 1.9MB/s。</p></div>
+        </li>
+        <li class="list-item">
+          <time>11-02</time>
+          <div><h4>索引核对规则加入分块完整度字段</h4><p>条目页新增完整度百分比，做种数为 0 但完整度大于 0 时保留在候补库，供用户判断是否值得等待。</p></div>
+        </li>
+        <li class="list-item">
+          <time>10-31</time>
+          <div><h4>本周断种复核完成 500 条</h4><p>2015 年前条目抽样中 183 条判定断种，另有 47 条完整度停在 40%—90% 之间但仍有节点活动，未做删除。</p></div>
+        </li>
+      </div>
+    </div>
+  </section>
+
+  <!-- 分类入口 -->
+  <section class="section" id="cats">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">Index</span>
+          <h2>分类索引入口</h2>
+          <p>按文件类型与常见检索意图划分，括号内为当前正式库条目数。</p>
+        </div>
+      </div>
+      <div class="chips">
+        <a href="/#picks">磁力链接哈希校验 <b>214</b></a>
+        <a href="/#picks">种子文件 tracker 配置 <b>168</b></a>
+        <a href="/#deep">DHT 节点端口映射 <b>97</b></a>
+        <a href="/#faq">做种率与断种判断 <b>183</b></a>
+        <a href="/#guide">下载速度调优 <b>126</b></a>
+        <a href="/#updates">客户端版本差异 <b>74</b></a>
+        <a href="/#deep">离线缓存与网盘秒传 <b>61</b></a>
+        <a href="/#faq">元数据获取失败 <b>143</b></a>
+        <a href="/#comments">字幕与音轨匹配 <b>58</b></a>
+        <a href="/#rank">IPv6 网络下的做种 <b>42</b></a>
+        <a href="/#guide">磁盘写入与缓存设置 <b>69</b></a>
+        <a href="/#recs">私有 tracker 申请 <b>35</b></a>
+      </div>
+      <div class="notice" style="margin-top:var(--sp-5)">
+        <strong>说明</strong>
+        <span>分类数按 11 月 8 日正式库统计，候补库条目不计入。点击分类跳到对应板块，具体条目请用顶部搜索框查哈希前缀。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 深度解析 -->
+  <section class="section" id="deep">
+    <div class="wrap">
+      <article class="deep">
+        <span class="kicker">Analysis</span>
+        <h2>深度解析：速度瓶颈到底在不在运营商</h2>
+        <p class="deep-lead">结论先放这里：在 2026 年 10 月的 312 次测试里，运营商带宽只决定了速度上限的一部分，真正拉开差距的是每任务连接数、磁盘缓存和做种节点的网络类型。</p>
+
+        <h3>一、同一资源、三套客户端，11 月 3 日的对比</h3>
+        <p>测试资源是 2026 年 10 月发布的开源系统镜像，总大小 6.4GB，测试时做种 18 个、下载 4 个。网络为同一台 WiFi 6 路由下的千兆宽带，三次测试间隔 40 分钟，避开晚高峰。结果差异集中在连接建立后的前 5 分钟：</p>
+        <table class="compare">
+          <thead><tr><th>客户端与配置</th><th>每任务连接数</th><th class="num">峰值速度</th><th class="num">5 分钟均值</th></tr></thead>
+          <tbody>
+            <tr><td>qBittorrent 5.0.2 默认</td><td>100</td><td class="num">6.8 MB/s</td><td class="num">5.1 MB/s</td></tr>
+            <tr><td>qBittorrent 5.0.2 调优</td><td>200，缓存 64MB</td><td class="num">8.7 MB/s</td><td class="num">8.2 MB/s</td></tr>
+            <tr><td>Transmission 4.1 默认</td><td>60</td><td class="num">4.9 MB/s</td><td class="num">3.6 MB/s</td></tr>
+          </tbody>
+        </table>
+        <p>调优后的峰值只比默认高 1.9MB/s，但 5 分钟均值差了 3.1MB/s。差别来自连接数上限被打满后，客户端更早连上做种节点里那 2 个走 IPv6 的地址。Transmission 4.1 的 60 连接上限在同类资源里先到顶，速度曲线在 2 分 40 秒后走平。</p>
+
+        <h3>二、做种率为 0 但完整度 62%，能不能等</h3>
+        <p>11 月 5 日的纪录片字幕轨条目，做种数显示 0，但分块完整度 62%，持有节点 5 个。到 11 月 6 日同一时间复查，完整度升到 65%，即 24 小时推进 3 个百分点。按这个速率补满还差约 12 天，且中途任一节点离线都可能归零。可复核的判断是：完整度低于 70% 且持有节点少于 10 个的资源，等待收益低于另找源的成本。</p>
+        <blockquote>可核对记录：条目编号 b7c2…a91f，11-05 23:40 完整度 62%，11-06 23:40 完整度 65%，持有节点 5→5，做种 0→0。来源为客户端分块图表与 DHT 查询结果。</blockquote>
+
+        <h3>三、“换 tracker 就能提速”这个说法要分开看</h3>
+        <p>公共 tracker 在 11 月 5 日有 3 个停止响应，依赖它们的 12 条精选条目连接数平均掉 40%。但把 tracker 换成私有地址并非万能：私有 tracker 只影响 peer 发现阶段，元数据交换仍走 DHT。测试里换 tracker 后前 30 秒连接数从 41 升到 136，速度只从 3.2MB/s 提到 4.0MB/s，因为持有分块最完整的两个节点本来就已连上。</p>
+        <p>反过来，tracker 全挂、DHT 可用时，速度下降通常发生在第 3 分钟之后，原因是 peer 列表刷新慢。这个判断与部分论坛说法相反——那里常把“换 tracker”当作首选方案，但 11 月 1 日至 7 日的记录里，只有 4 次换 tracker 后速度涨幅超过 50%，且 4 次都伴随连接数上升而非分块来源变化。</p>
+
+        <h3>四、把判断拆成可核对的结构</h3>
+        <p>遇到下载慢，按下面顺序逐项核对，每项都能落到具体数字：</p>
+        <ol>
+          <li>连接数是否到顶：客户端状态栏里连接数除以每任务上限，超过 0.9 说明先调上限。</li>
+          <li>做种与下载比例：18 个做种配 4 个下载是健康区间，反过来做种少于 3 个时速度由节点质量决定。</li>
+          <li>分块完整度：低于 70% 且 6 小时不动，判定为断种风险高。</li>
+          <li>磁盘写入：缓存低于 32MB 时，机械盘环境下写入等待会拉低 5%—12% 的均值速度。</li>
+        </ol>
+        <p>这条链路里没有“运营商背锅”的默认位置。11 月 2 日的一次测试中，宽带测速显示上行 52Mbps、下行 940Mbps，而磁力下载只跑到 1.1MB/s，最终定位到该资源只有 1 个做种节点且其为 4G 移动网络，并非家庭宽带问题。</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- 体验指南 -->
+  <section class="section" id="guide">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">Guide</span>
+          <h2>使用指南：从哈希到下载完成</h2>
+          <p>四步流程与两处常见配置，按 11 月 8 日的客户端界面撰写。</p>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h3>校验磁力链接哈希</h3>
+          <p>复制出的链接末尾应为 40 位十六进制（v1）或 64 位 base32（v2）。少一位或多一位时客户端会提示无效，元数据永远拿不到。</p>
+        </div>
+        <div class="step">
+          <h3>设置每任务连接数</h3>
+          <p>qBittorrent 在“连接”页把每任务上限从 100 提到 200，全局上限同步到 800。Transmission 建议不低于 120，避免 60 的默认值先到顶。</p>
+        </div>
+        <div class="step">
+          <h3>检查 DHT 与端口</h3>
+          <p>状态栏显示 DHT 节点数，正常应在 300 以上。路由器里给客户端本机开一个 6881—6889 的端口映射，IPv6 放行后在移动网络下的可达性明显改善。</p>
+        </div>
+        <div class="step">
+          <h3>观察分块与做种</h3>
+          <p>开始 2 分钟后看分块图，完整度升得慢且做种少于 3 个，先别取消任务，把客户端挂到后台过夜，部分节点是时区错开上线。</p>
+        </div>
+        <div class="step">
+          <h3>下载完成后保种</h3>
+          <p>做种比不低于 1.0 再退出，11 月抽样里能维持 3 天以上的条目，后续新用户获取元数据成功率高出约 22 个百分点。</p>
+        </div>
+        <div class="step">
+          <h3>记录条目信息</h3>
+          <p>保存哈希前缀、tracker 列表与下载完成时间。换设备或重装客户端时，这三项决定能否原样恢复任务，而不是重新找源。</p>
+        </div>
+      </div>
+      <div class="panel-2" style="margin-top:var(--sp-5)">
+        <div class="panel">
+          <h3><span class="dot"></span>推荐做法</h3>
+          <ul>
+            <li>用 v2 哈希时保持两种协议的链接并存，兼容旧客户端。</li>
+            <li>缓存开到 64MB 并开启预分配，减少分块写入等待。</li>
+            <li>候补库条目先看完整度再决定是否排队。</li>
+          </ul>
+        </div>
+        <div class="panel bad">
+          <h3><span class="dot"></span>容易踩的坑</h3>
+          <ul>
+            <li>把迅雷离线缓存当成做种节点，测速时数据被高估。</li>
+            <li>用 4G 热点做种却只开 IPv4，移动网络下多数节点不可达。</li>
+            <li>做种数显示 1 就直接取消，忽略了时区错开的节点上线规律。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="section" id="faq">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">FAQ</span>
+          <h2>常见问题</h2>
+          <p>按 11 月上旬用户提问频次排序，答案以客户端与协议的实际行为为准。</p>
+        </div>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>磁力链接和种子文件有什么区别？</summary>
+          <div class="answer">磁力链接只携带 info hash，由客户端向 DHT 网络寻找持有该哈希的节点；种子文件内嵌 tracker 地址与文件分块信息，能直接连上 tracker 获取 peer 列表。前者不依赖 tracker 存活，后者在没有公网 DHT 的局域网里更容易起速。11 月 5 日停响的 3 个 tracker 只影响种子文件方式。</div>
+        </details>
+        <details>
+          <summary>下载一直显示元数据获取中怎么办？</summary>
+          <div class="answer">先确认磁力链接末尾 40 位十六进制哈希完整，再把 DHT 节点数上限从默认值提到 800，并检查客户端是否处于仅 IPv6 模式。节点池里没有持有该哈希的做种者时，元数据就无法交换；链接本身少了字符也会卡在同一位置，两种原因表现一致，只能靠核对哈希排除。</div>
+        </details>
+        <details>
+          <summary>为什么同一资源换了客户端速度掉一半？</summary>
+          <div class="answer">差异多出在连接数上限与磁盘写入策略。11 月 3 日的实测里，把每任务连接数从 60 调到 200、写入缓存从 16MB 调到 64MB 后，同一资源的速度从 4.1MB/s 升到 8.7MB/s。默认配置下连接数先到顶，后面的节点排不上队，这与带宽大小无关。</div>
+        </details>
+        <details>
+          <summary>做种率为 0 的资源还能下完吗？</summary>
+          <div class="answer">取决于是否还有持有分块的节点在活动。做种率显示 0 但完整度不为 0 时，进度会缓慢推进，11 月 5 日的字幕轨条目 24 小时推进了 3 个百分点；若完整度停在固定百分比超过 6 小时，可判定断种，等下去的成本高于另找源。</div>
+        </details>
+        <details>
+          <summary>IPv6 对下载速度的影响有多大？</summary>
+          <div class="answer">在 9.6 万节点抽样里 IPv6 占 41.2%，且多为移动网络地址。开启 IPv6 并放行端口后，同一条目连接数平均增加 27 个，但只有做种节点本身也走 IPv6 时才体现为速度提升。11 月 4 日的无损音频条目里，6 个做种中 2 个是 IPv6，贡献了约 1.4MB/s。</div>
+        </details>
+        <details>
+          <summary>私有 tracker 值得申请吗？</summary>
+          <div class="answer">看用途。私有 tracker 主要改善 peer 发现的稳定性和做种统计，对热门资源提速有限。测试里换 tracker 后前 30 秒连接数从 41 升到 136，速度只从 3.2MB/s 到 4.0MB/s。冷门条目才更能体现差别，因为公共 tracker 停响后 peer 列表刷新会慢到 3 分钟以上。</div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- 用户评论 -->
+  <section class="section" id="comments">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">Comments</span>
+          <h2>用户评论</h2>
+          <p>摘自 11 月 1 日至 8 日的条目反馈，保留原始语气。</p>
+        </div>
+      </div>
+      <div class="comments">
+        <div class="comment">
+          <div class="who"><span class="avatar">陈</span><b>陈默</b><time>11-08 09:12</time></div>
+          <p>开源系统镜像合集这个条目，18 个做种是真的稳，调优之后 8 分钟下完。哈希和官网校验页对上了，这点比速度更让我放心。</p>
+          <span class="ref">→ 精选：开源系统镜像合集 2026.10</span>
+        </div>
+        <div class="comment">
+          <div class="who"><span class="avatar">林</span><b>林一舟</b><time>11-07 22:05</time></div>
+          <p>播客归档那 216 期，我从 0.4MB/s 挂到第二天，节点找回来之后确实快了。但说句实话，216 期的编号有重复，索引页该去重。</p>
+          <span class="ref">→ 精选：播客音频归档 2019—2024</span>
+        </div>
+        <div class="comment">
+          <div class="who"><span class="avatar">吴</span><b>吴雨桐</b><time>11-07 15:40</time></div>
+          <p>Transmission 默认 60 连接我是真服了，同一部片子换 qBittorrent 直接翻倍。之前一直以为是宽带问题，白续了一年千兆。</p>
+          <span class="ref">→ 深度解析：三套客户端对比</span>
+        </div>
+        <div class="comment">
+          <div class="who"><span class="avatar">周</span><b>周牧</b><time>11-06 20:31</time></div>
+          <p>纪录片字幕轨那条完整度 62%，我挂了两天到 65%，速度慢但没断。想等的人可以等，不想等的趁早换源，个人感觉性价比不高。</p>
+          <span class="ref">→ 精选：纪录片双语字幕轨 2018</span>
+        </div>
+        <div class="comment">
+          <div class="who"><span class="avatar">赵</span><b>赵岚</b><time>11-05 11:18</time></div>
+          <p>换 tracker 提速这说法太玄了，我按帖子里换了三个 tracker，速度一点没动。后来把连接数调上去才有变化，顺序搞反了。</p>
+          <span class="ref">→ 深度解析：tracker 与连接数</span>
+        </div>
+        <div class="comment">
+          <div class="who"><span class="avatar">孙</span><b>孙可</b><time>11-04 18:02</time></div>
+          <p>摄影素材 RAW 包 74GB，31 个做种，网络没问题但磁盘先满了，下载到 80% 停下。能否在条目页直接标总大小，比做种数更影响我决策。</p>
+          <span class="ref">→ 精选：摄影素材 RAW 包 320 张</span>
+        </div>
+        <div class="comment">
+          <div class="who"><span class="avatar">何</span><b>何清</b><time>11-03 09:47</time></div>
+          <p>IPv6 那部分讲得对，我在移动网络下开端口放行后连接数从 12 个涨到 90 多个。但家里路由器要重启才生效，文档里最好写明。</p>
+          <span class="ref">→ 常见问题：IPv6 对速度的影响</span>
+        </div>
+        <div class="comment">
+          <div class="who"><span class="avatar">许</span><b>许知远</b><time>11-02 23:56</time></div>
+          <p>电子书合集 74 本，1.8GB，三分钟下完。v2 链接也能用，这一点比很多老条目强。就是有几本封面图缺失，不影响阅读。</p>
+          <span class="ref">→ 精选：电子书 EPUB 阅读合集</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 相关资讯 -->
+  <section class="section" id="news">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">News</span>
+          <h2>相关资讯</h2>
+          <p>与索引、客户端、网络环境相关的公开信息，日期在 10 月 9 日至 11 月 8 日之间。</p>
+        </div>
+      </div>
+      <div class="news">
+        <article class="news-card">
+          <img src="https://picsum.photos/seed/anbt-node307/480/280" width="480" height="280" loading="lazy" alt="网络节点拓扑示意图，多个分散节点通过连线相连">
+          <div class="body">
+            <h3>DHT 节点抽样方法更新</h3>
+            <p>11 月 6 日改用按地址段分层抽样，9.6 万节点里 IPv6 占 41.2%，比 10 月 12 日的方法高出 7.5 个百分点，部分来自抽样方式差异。</p>
+            <time>11-06</time>
+          </div>
+        </article>
+        <article class="news-card">
+          <img src="https://picsum.photos/seed/anbt-torrent811/480/280" width="480" height="280" loading="lazy" alt="计算机屏幕上显示的分块下载进度条与速度曲线">
+          <div class="body">
+            <h3>qBittorrent 5.0.3 发布说明要点</h3>
+            <p>修复启动后 20 秒不向 DHT 发查询的问题，实测该时间段节点连接数从 3 个回到 118 个。Windows 安装包同步更新。</p>
+            <time>11-07</time>
+          </div>
+        </article>
+        <article class="news-card">
+          <img src="https://picsum.photos/seed/anbt-tracker502/480/280" width="480" height="280" loading="lazy" alt="服务器机柜与网络指示灯，代表 tracker 服务状态">
+          <div class="body">
+            <h3>3 个公共 tracker 停止响应</h3>
+            <p>11 月 5 日起不再返回 peer 列表，依赖它们的 12 条精选条目连接数平均掉 40%。候补库中已有 9 条补入私有 tracker。</p>
+            <time>11-05</time>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 周榜 -->
+  <section class="section" id="rank">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">Ranking</span>
+          <h2>本周做种存活榜</h2>
+          <p>按 11 月 1 日至 7 日每日复检的做种数取均值排序，仅列正式库条目。</p>
+        </div>
+      </div>
+      <div class="rank">
+        <ol>
+          <li><span class="no">1</span><span class="name">摄影素材 RAW 包 320 张</span><span class="score">均值 31.4 做种</span></li>
+          <li><span class="no">2</span><span class="name">开源系统镜像合集 2026.10</span><span class="score">均值 18.2 做种</span></li>
+          <li><span class="no">3</span><span class="name">电子书 EPUB 阅读合集</span><span class="score">均值 12.7 做种</span></li>
+          <li><span class="no">4</span><span class="name">播客音频归档 2019—2024</span><span class="score">均值 9.1 做种</span></li>
+          <li><span class="no">5</span><span class="name">无损音频现场录音 24bit</span><span class="score">均值 6.3 做种</span></li>
+          <li><span class="no">6</span><span class="name">纪录片双语字幕轨 2018</span><span class="score">均值 0.4 做种</span></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- 相关推荐 -->
+  <section class="section" id="recs">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <span class="kicker">Related</span>
+          <h2>相关推荐</h2>
+          <p>按检索意图与条目关联度排列，标签直接指向板块锚点。</p>
+        </div>
+      </div>
+      <div class="rec-tags">
+        <a href="/#overview">磁力链接哈希校验方法</a>
+        <a href="/#guide">DHT 节点端口映射设置</a>
+        <a href="/#deep">做种率 0 的条目要不要等</a>
+        <a href="/#updates">qBittorrent 5.0.3 更新内容</a>
+        <a href="/#faq">元数据获取失败排查</a>
+        <a href="/#guide">磁盘写入缓存调到多少</a>
+        <a href="/#picks">播客音频归档索引</a>
+        <a href="/#rank">本周做种存活榜</a>
+        <a href="/#comments">IPv6 做种实测反馈</a>
+        <a href="/#news">公共 tracker 停止响应</a>
+        <a href="/#faq">v1 与 v2 磁力链接区别</a>
+        <a href="/#deep">离线缓存与网盘秒传</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="brand-col">
+      <div class="brand">
+        <svg viewBox="0 0 64 64" width="34" height="34" role="img" aria-hidden="true">
+          <rect width="64" height="64" rx="14" fill="#c8f169"/>
+          <path d="M18 42c0-9 6-16 14-16s14 7 14 16" stroke="#123b2f" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <circle cx="25.5" cy="43" r="3" fill="#123b2f"/>
+          <circle cx="38.5" cy="43" r="3" fill="#123b2f"/>
+          <path d="M32 12v11M26 20l6 3 6-3" stroke="#123b2f" stroke-width="3.6" stroke-linecap="round" fill="none"/>
+        </svg>
+        <span class="brand-text">蚂蚁bt</span>
+      </div>
+      <p>把 info hash、节点分布与连接数放在一起看，速度问题才找得到落点。</p>
+    </div>
+    <div>
+      <h4>内容栏目</h4>
+      <ul>
+        <li><a href="/#overview">索引概况</a></li>
+        <li><a href="/#picks">精选条目</a></li>
+        <li><a href="/#updates">版本动态</a></li>
+        <li><a href="/#deep">实测解析</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>工具与规则</h4>
+      <ul>
+        <li><a href="/#guide">使用指南</a></li>
+        <li><a href="/#faq">常见问题</a></li>
+        <li><a href="/#cats">分类索引</a></li>
+        <li><a href="/#rank">周榜</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>社区反馈</h4>
+      <ul>
+        <li><a href="/#comments">用户评论</a></li>
+        <li><a href="/#news">相关资讯</a></li>
+        <li><a href="/#recs">相关推荐</a></li>
+        <li><a href="/#top">回到顶部</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="footer-bottom">
+      <span>索引与测速数据为示例条目，日期口径 2026-10-09 至 2026-11-08；页面更新于 11-08，对应正文“索引库新增 1,842 条”与“精选 6 条复检”两项。</span>
+      <span>© 2026 蚂蚁bt 内容观察</span>
+    </div>
+  </div>
+</footer>
+
+<button class="to-top" id="toTop" aria-label="回到顶部">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg>
+</button>
+
+<script>
+(function(){
+  var menuBtn = document.getElementById('menuBtn');
+  var nav = document.getElementById('mainNav');
+  menuBtn.addEventListener('click', function(){
+    var open = nav.classList.toggle('open');
+    menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    menuBtn.setAttribute('aria-label', open ? '关闭导航菜单' : '打开导航菜单');
+  });
+  nav.addEventListener('click', function(e){
+    if(e.target.tagName === 'A'){
+      nav.classList.remove('open');
+      menuBtn.setAttribute('aria-expanded','false');
+      menuBtn.setAttribute('aria-label','打开导航菜单');
+    }
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && nav.classList.contains('open')){
+      nav.classList.remove('open');
+      menuBtn.setAttribute('aria-expanded','false');
+      menuBtn.focus();
+    }
+  });
+
+  var toTop = document.getElementById('toTop');
+  window.addEventListener('scroll', function(){
+    toTop.classList.toggle('show', window.scrollY > 520);
+  }, {passive:true});
+  toTop.addEventListener('click', function(){
+    window.scrollTo({top:0, behavior:'smooth'});
+  });
+
+  var sideLinks = [].slice.call(document.querySelectorAll('#sideNav a'));
+  var sections = sideLinks.map(function(a){
+    return document.querySelector(a.getAttribute('href').replace('/#','#'));
+  });
+  function highlight(){
+    var pos = window.scrollY + 150, idx = -1;
+    sections.forEach(function(s, i){
+      if(s && s.offsetTop <= pos) idx = i;
+    });
+    sideLinks.forEach(function(a,i){ a.classList.toggle('active', i === idx); });
+  }
+  window.addEventListener('scroll', highlight, {passive:true});
+  highlight();
+
+  var data = [
+    {t:'磁力链接哈希校验方法', id:'/#overview'},
+    {t:'DHT 节点端口映射设置', id:'/#guide'},
+    {t:'做种率与断种判断', id:'/#faq'},
+    {t:'qBittorrent 5.0.3 更新', id:'/#updates'},
+    {t:'Transmission 4.1 连接上限', id:'/#updates'},
+    {t:'公共 tracker 停止响应', id:'/#news'},
+    {t:'离线缓存与网盘秒传', id:'/#deep'},
+    {t:'磁盘写入与缓存设置', id:'/#guide'},
+    {t:'IPv6 网络下的做种', id:'/#rank'},
+    {t:'元数据获取失败排查', id:'/#faq'},
+    {t:'做种存活周榜', id:'/#rank'},
+    {t:'用户评论与实测反馈', id:'/#comments'},
+    {t:'精选条目复检记录', id:'/#picks'},
+    {t:'分类索引条目数', id:'/#cats'}
+  ];
+  var input = document.getElementById('siteSearch');
+  var box = document.getElementById('searchResult');
+  function render(q){
+    box.innerHTML = '';
+    if(!q){ box.classList.remove('show'); return; }
+    var hits = data.filter(function(d){ return d.t.toLowerCase().indexOf(q.toLowerCase()) > -1; });
+    if(hits.length === 0){
+      var p = document.createElement('div');
+      p.className = 'empty';
+      p.textContent = '没有匹配“' + q + '”的条目，试试“哈希”“做种”或“tracker”。';
+      box.appendChild(p);
+    } else {
+      hits.slice(0,8).forEach(function(d){
+        var a = document.createElement('a');
+        a.href = d.id;
+        a.textContent = d.t;
+        box.appendChild(a);
+      });
+    }
+    box.classList.add('show');
+  }
+  input.addEventListener('input', function(){ render(input.value.trim()); });
+  document.addEventListener('click', function(e){
+    if(!e.target.closest('.search')) box.classList.remove('show');
+  });
+  input.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){
+      var first = box.querySelector('a');
+      if(first){ window.location.href = first.getAttribute('href'); }
+    }
+  });
+})();
+</script>
+</body>
+  </html>
